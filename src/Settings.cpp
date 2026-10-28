@@ -103,13 +103,15 @@ namespace Settings
 				g_config.waterPursuit = ParseBool(value, g_config.waterPursuit);
 			} else if (key == "bdragonguard") {
 				g_config.dragonGuard = ParseBool(value, g_config.dragonGuard);
+			} else if (key == "bnozonecells") {
+				g_config.noZoneCells = ParseBool(value, g_config.noZoneCells);
 			} else if (key == "sextraexcludedraces") {
 				ParseRaceList(value, g_config.extraExcludedRaces);
 			}
 		}
 
-		logger::info("Settings: doors={} water={} dragonGuard={} extraExcludedRaces={}",
-			g_config.doorPursuit, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
+		logger::info("Settings: doors={} noZoneCells={} water={} dragonGuard={} extraExcludedRaces={}",
+			g_config.doorPursuit, g_config.noZoneCells, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
 	}
 
 	const Config& Get()

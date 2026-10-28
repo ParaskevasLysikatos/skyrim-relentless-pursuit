@@ -7,8 +7,11 @@ namespace Pursuit
 	namespace
 	{
 		constexpr RE::FormID kActorTypeDragon = 0x00035D59;  // Skyrim.esm
+		constexpr RE::FormID kNoBoundaryZone = 0x800;        // RelentlessPursuit.esp
+		constexpr auto       kPluginName = "RelentlessPursuit.esp"sv;
 
-		RE::BGSKeyword*              g_dragonKeyword = nullptr;
+		RE::BGSKeyword*                g_dragonKeyword = nullptr;
+		RE::BGSEncounterZone*          g_noBoundaryZone = nullptr;
 		std::unordered_set<RE::FormID> g_extraExcluded;
 
 		// Catches dragon races that lack the keyword (e.g. dlc2SpectralDragonRace) without
@@ -76,15 +79,24 @@ namespace Pursuit
 		}
 	}
 
-	void ResolveExclusions()
+	void ResolveForms()
 	{
+		auto* dataHandler = RE::TESDataHandler::GetSingleton();
+
+		g_noBoundaryZone = dataHandler->LookupForm<RE::BGSEncounterZone>(kNoBoundaryZone, kPluginName);
+		if (g_noBoundaryZone) {
+			g_noBoundaryZone->data.flags.set(RE::ENCOUNTER_ZONE_DATA::Flag::kDisableCombatBoundary);
+			logger::info("No-boundary zone found: {} [{:08X}]", kPluginName, g_noBoundaryZone->GetFormID());
+		} else {
+			logger::warn("{} not active (tick it in the plugin list); cells without an encounter zone won't be covered", kPluginName);
+		}
+
 		g_dragonKeyword = RE::TESForm::LookupByID<RE::BGSKeyword>(kActorTypeDragon);
 		if (!g_dragonKeyword) {
 			logger::warn("ActorTypeDragon keyword not found; falling back to race names only");
 		}
 
 		g_extraExcluded.clear();
-		auto* dataHandler = RE::TESDataHandler::GetSingleton();
 		for (const auto& entry : Settings::Get().extraExcludedRaces) {
 			if (auto* race = dataHandler->LookupForm<RE::TESRace>(entry.localID, entry.plugin)) {
 				g_extraExcluded.insert(race->GetFormID());
@@ -102,6 +114,11 @@ namespace Pursuit
 			}
 		}
 		logger::info("{} races excluded in total", dragons);
+	}
+
+	RE::BGSEncounterZone* GetNoBoundaryZone()
+	{
+		return g_noBoundaryZone;
 	}
 
 	bool IsExcludedRace(const RE::TESRace* a_race)

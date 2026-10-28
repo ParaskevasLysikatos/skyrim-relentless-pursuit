@@ -57,6 +57,7 @@ jobs:
           Copy-Item $dll.FullName $out
           if ($pdb) { Copy-Item $pdb.FullName $out }
           Copy-Item package/SKSE/Plugins/RelentlessPursuit.ini $out
+          Copy-Item package/RelentlessPursuit.esp "dist/Relentless Pursuit"
           Compress-Archive -Path "dist/Relentless Pursuit/*" -DestinationPath "dist/RelentlessPursuit.zip" -Force
           Get-ChildItem -Recurse "dist" | ForEach-Object { Write-Output ("{0}  {1}" -f $_.FullName, $_.Length) }
 

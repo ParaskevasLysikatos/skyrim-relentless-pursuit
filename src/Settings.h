@@ -13,6 +13,7 @@ namespace Settings
 		bool doorPursuit{ true };   // switch off the combat boundary on every encounter zone
 		bool waterPursuit{ true };  // swimming races keep fighting in water
 		bool dragonGuard{ true };   // excluded creatures never follow you through load doors
+		bool noZoneCells{ true };   // cells without an encounter zone get the no-boundary zone while you're in them
 
 		std::vector<ExtraRace> extraExcludedRaces;  // on top of dragons, which are always excluded
 	};

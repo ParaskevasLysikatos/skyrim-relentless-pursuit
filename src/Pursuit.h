@@ -2,8 +2,12 @@
 
 namespace Pursuit
 {
-	// Looks up the ActorTypeDragon keyword and the extra races from the ini. Call once after data is loaded.
-	void ResolveExclusions();
+	// Looks up the ActorTypeDragon keyword, the extra races from the ini and the no-boundary zone from
+	// RelentlessPursuit.esp. Call once after data is loaded.
+	void ResolveForms();
+
+	// RelentlessPursuit.esp|0x800, or nullptr when the plugin isn't active.
+	[[nodiscard]] RE::BGSEncounterZone* GetNoBoundaryZone();
 
 	// Dragons (ActorTypeDragon keyword or a *Dragon* race editor ID) plus any extra races from the ini.
 	[[nodiscard]] bool IsExcludedRace(const RE::TESRace* a_race);
