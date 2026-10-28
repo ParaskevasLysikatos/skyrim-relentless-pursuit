@@ -111,7 +111,7 @@ namespace Settings
 				g_config.skipQuestActors = ParseBool(value, g_config.skipQuestActors);
 			} else if (key == "ffollowradius") {
 				try {
-					g_config.followRadius = std::max(0.0f, std::stof(value));
+					g_config.followRadius = (std::max)(0.0f, std::stof(value));
 				} catch (...) {
 					logger::warn("fFollowRadius '{}' is not a number, keeping {:.0f}", value, g_config.followRadius);
 				}

@@ -252,9 +252,9 @@ namespace DoorWatch
 				const auto* data = teleport->teleportData;
 				if (config.teleportFollow && data && data->linkedDoor && !candidates.empty()) {
 					std::ranges::sort(candidates, {}, &Candidate::distance);
-					const auto maxFollowers = static_cast<std::size_t>(std::max(config.maxFollowers, 0));
+					const auto maxFollowers = static_cast<std::size_t>((std::max)(config.maxFollowers, 0));
 					const auto overLimit = candidates.size() > maxFollowers ? candidates.size() - maxFollowers : 0;
-					candidates.resize(std::min(candidates.size(), maxFollowers));
+					candidates.resize((std::min)(candidates.size(), maxFollowers));
 
 					Batch       batch{ data->linkedDoor, data->position, data->rotation, now, {} };
 					std::string plan;
