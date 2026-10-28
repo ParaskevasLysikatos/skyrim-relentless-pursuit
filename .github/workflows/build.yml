@@ -1,0 +1,72 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  COMMONLIB_TAG: v15.0.1
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fetch CommonLibSSE-NG ${{ env.COMMONLIB_TAG }}
+        shell: pwsh
+        run: git clone --depth 1 --branch $env:COMMONLIB_TAG --recurse-submodules --shallow-submodules https://github.com/alandtse/CommonLibVR lib/commonlibsse-ng
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+
+      - name: Update xmake package repo
+        run: xmake repo --update
+
+      - name: Configure and build
+        shell: pwsh
+        env:
+          XSE_TES5_MODS_PATH: ${{ github.workspace }}/install
+        run: |
+          function Fail-WithLog($log, $code) {
+            # Surface the compiler errors as one annotation so they are readable without logging in.
+            $lines = Select-String -Path $log -Pattern 'error|Error|failed|undefined' | Select-Object -First 60 | ForEach-Object { $_.Line.Trim() }
+            $msg = ($lines -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Build failed::$msg"
+            exit $code
+          }
+          xmake config -m releasedbg -a x64 --yes 2>&1 | Tee-Object -FilePath config.log
+          if ($LASTEXITCODE -ne 0) { Fail-WithLog config.log $LASTEXITCODE }
+          xmake build --yes 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { Fail-WithLog build.log $LASTEXITCODE }
+
+      - name: Package for Mod Organizer 2
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem build -Recurse -Filter RelentlessPursuit.dll | Select-Object -First 1
+          if (-not $dll) { Write-Output "::error::RelentlessPursuit.dll not found"; exit 1 }
+          $pdb = Get-ChildItem build -Recurse -Filter RelentlessPursuit.pdb | Select-Object -First 1
+          $out = "dist/Relentless Pursuit/SKSE/Plugins"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item $dll.FullName $out
+          if ($pdb) { Copy-Item $pdb.FullName $out }
+          Copy-Item package/SKSE/Plugins/RelentlessPursuit.ini $out
+          Compress-Archive -Path "dist/Relentless Pursuit/*" -DestinationPath "dist/RelentlessPursuit.zip" -Force
+          Get-ChildItem -Recurse "dist" | ForEach-Object { Write-Output ("{0}  {1}" -f $_.FullName, $_.Length) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RelentlessPursuit
+          path: dist/RelentlessPursuit.zip
+
+      - name: Publish release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/RelentlessPursuit.zip

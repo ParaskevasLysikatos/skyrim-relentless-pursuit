@@ -1,0 +1,7 @@
+/lib/
+/build/
+/.xmake/
+/install/
+/dist/
+/vsxmake*/
+*.log
