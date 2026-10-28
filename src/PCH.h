@@ -9,8 +9,10 @@
 #include <format>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>

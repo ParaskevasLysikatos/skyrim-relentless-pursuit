@@ -105,13 +105,30 @@ namespace Settings
 				g_config.dragonGuard = ParseBool(value, g_config.dragonGuard);
 			} else if (key == "bnozonecells") {
 				g_config.noZoneCells = ParseBool(value, g_config.noZoneCells);
+			} else if (key == "bteleportfollow") {
+				g_config.teleportFollow = ParseBool(value, g_config.teleportFollow);
+			} else if (key == "bskipquestactors") {
+				g_config.skipQuestActors = ParseBool(value, g_config.skipQuestActors);
+			} else if (key == "ffollowradius") {
+				try {
+					g_config.followRadius = std::max(0.0f, std::stof(value));
+				} catch (...) {
+					logger::warn("fFollowRadius '{}' is not a number, keeping {:.0f}", value, g_config.followRadius);
+				}
+			} else if (key == "imaxfollowers") {
+				try {
+					g_config.maxFollowers = std::clamp(std::stoi(value), 0, 30);
+				} catch (...) {
+					logger::warn("iMaxFollowers '{}' is not a number, keeping {}", value, g_config.maxFollowers);
+				}
 			} else if (key == "sextraexcludedraces") {
 				ParseRaceList(value, g_config.extraExcludedRaces);
 			}
 		}
 
-		logger::info("Settings: doors={} noZoneCells={} water={} dragonGuard={} extraExcludedRaces={}",
-			g_config.doorPursuit, g_config.noZoneCells, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
+		logger::info("Settings: doors={} noZoneCells={} teleportFollow={} followRadius={:.0f} maxFollowers={} skipQuestActors={} water={} dragonGuard={} extraExcludedRaces={}",
+			g_config.doorPursuit, g_config.noZoneCells, g_config.teleportFollow, g_config.followRadius, g_config.maxFollowers,
+			g_config.skipQuestActors, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
 	}
 
 	const Config& Get()

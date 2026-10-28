@@ -4,6 +4,7 @@ SKSE plugin for Skyrim SE/AE (built and tested against 1.6.1170).
 
 - **Doors:** enemies in combat follow you through load doors. At startup the plugin switches on *Disable Combat Boundary* for every encounter zone, in memory only, so no plugin records are overridden (Open World Loot and other zone mods keep their level ranges).
 - **Cells without a zone:** enemies won't follow you into a cell that has no encounter zone (most outdoor cells, many houses). While you're in one, it gets the no-boundary zone from `RelentlessPursuit.esp` (same approach as Enemies Follow Me).
+- **Enemies come through after you:** the game itself only lets up to 2 enemies that are right at the door follow. When you use a load door, up to 8 enemies fighting you within 8192 units come through after you, each after about distance ÷ 350 seconds (2–12 s), at the spot where you came out, and only if you're still there; then they attack. Dragons, immobile and mounted enemies never come. Enemies in a quest alias come too unless `bSkipQuestActors = 1`.
 - **Water:** every race that can swim loses *No Combat In Water*, so bandits, wolves, bears and so on swim after you. Races with no swim animation stop at the shore.
 - **Door log:** every load-door use while enemies fight you is logged with their names and distance, and each enemy that follows you through is logged.
 - **Dragon guard:** dragons never follow you through a load door. When you use one, dragons fighting you stop combat. If one still comes through within 90 seconds, it is moved back outside that door.
