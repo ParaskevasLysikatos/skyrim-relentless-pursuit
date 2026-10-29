@@ -97,7 +97,7 @@ namespace BodyAlarm
 			if (!a_config.bodyAlarmCreatures && !a_actor->HasKeywordString("ActorTypeNPC"sv)) {
 				return false;
 			}
-			if (Pursuit::IsExcludedActor(a_actor) || !a_actor->IsHostileToActor(a_player)) {
+			if (Pursuit::IsExcludedActor(a_actor) || Pursuit::IsHarmlessAnimal(a_actor) || !a_actor->IsHostileToActor(a_player)) {
 				return false;
 			}
 			if (process->lowProcessFlags.all(RE::AIProcess::LowProcessFlags::kAlert)) {

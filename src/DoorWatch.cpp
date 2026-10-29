@@ -90,7 +90,7 @@ namespace DoorWatch
 		bool IsAlertedEnemy(RE::Actor* a_actor, RE::PlayerCharacter* a_player)
 		{
 			if (!a_actor || a_actor == a_player || a_actor->IsDead() || a_actor->IsDisabled() || a_actor->IsInCombat() ||
-				a_actor->IsPlayerTeammate() || !a_actor->IsHostileToActor(a_player)) {
+				a_actor->IsPlayerTeammate() || Pursuit::IsHarmlessAnimal(a_actor) || !a_actor->IsHostileToActor(a_player)) {
 				return false;
 			}
 			const auto* process = a_actor->GetActorRuntimeData().currentProcess;
@@ -126,6 +126,9 @@ namespace DoorWatch
 			}
 			if (a_actor->AsActorState()->IsBleedingOut()) {
 				return "bleeding out"sv;
+			}
+			if (Pursuit::IsHarmlessAnimal(a_actor)) {
+				return "harmless animal"sv;  // a fleeing deer is "fighting you" too
 			}
 			if (a_config.skipQuestActors && a_actor->extraList.HasType(RE::ExtraDataType::kAliasInstanceArray)) {
 				return "quest"sv;
@@ -463,7 +466,7 @@ namespace DoorWatch
 					if (!batch.followers.empty()) {
 						logger::info("Coming through after you: {}{}", plan,
 							overLimit + skippedFar + skippedQuest + skippedOther > 0 ?
-								std::format(" (not coming: {} over the limit, {} too far, {} quest, {} mounted/immobile/bleeding out)", overLimit, skippedFar, skippedQuest, skippedOther) :
+								std::format(" (not coming: {} over the limit, {} too far, {} quest, {} mounted/immobile/bleeding out/harmless animal)", overLimit, skippedFar, skippedQuest, skippedOther) :
 								std::string());
 
 						std::scoped_lock lock(g_lock);
