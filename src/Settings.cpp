@@ -24,6 +24,15 @@ namespace Settings
 			return a_text;
 		}
 
+		void ParseFloat(const std::string& a_value, float& a_out, float a_min, float a_max, std::string_view a_key)
+		{
+			try {
+				a_out = std::clamp(std::stof(a_value), a_min, a_max);
+			} catch (...) {
+				logger::warn("{} '{}' is not a number, keeping {:.1f}", a_key, a_value, a_out);
+			}
+		}
+
 		bool ParseBool(const std::string& a_value, bool a_default)
 		{
 			const auto v = Lower(a_value);
@@ -135,6 +144,18 @@ namespace Settings
 				} catch (...) {
 					logger::warn("iMaxReturns '{}' is not a number, keeping {}", value, g_config.maxReturns);
 				}
+			} else if (key == "bbodyalarm") {
+				g_config.bodyAlarm = ParseBool(value, g_config.bodyAlarm);
+			} else if (key == "fbodyalarmrange") {
+				ParseFloat(value, g_config.bodyAlarmRange, 0.0f, 20000.0f, "fBodyAlarmRange"sv);
+			} else if (key == "fbodyalarmbodydistance") {
+				ParseFloat(value, g_config.bodyAlarmBodyDistance, 0.0f, 8192.0f, "fBodyAlarmBodyDistance"sv);
+			} else if (key == "fbodyalarmdelay") {
+				ParseFloat(value, g_config.bodyAlarmDelay, 0.0f, 60.0f, "fBodyAlarmDelay"sv);
+			} else if (key == "bbodyalarmcreatures") {
+				g_config.bodyAlarmCreatures = ParseBool(value, g_config.bodyAlarmCreatures);
+			} else if (key == "bbodyalarminvisibilityhides") {
+				g_config.bodyAlarmInvisibilityHides = ParseBool(value, g_config.bodyAlarmInvisibilityHides);
 			} else if (key == "sextraexcludedraces") {
 				ParseRaceList(value, g_config.extraExcludedRaces);
 			}
@@ -143,6 +164,9 @@ namespace Settings
 		logger::info("Settings: doors={} noZoneCells={} teleportFollow={} alertedFollow={} followRadius={:.0f} maxFollowers={} skipQuestActors={} pursuitTime={:.0f} maxReturns={} water={} dragonGuard={} extraExcludedRaces={}",
 			g_config.doorPursuit, g_config.noZoneCells, g_config.teleportFollow, g_config.alertedFollow, g_config.followRadius, g_config.maxFollowers,
 			g_config.skipQuestActors, g_config.pursuitTime, g_config.maxReturns, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
+		logger::info("Settings: bodyAlarm={} range={:.0f} bodyDistance={:.0f} delay={:.1f} creatures={} invisibilityHides={}",
+			g_config.bodyAlarm, g_config.bodyAlarmRange, g_config.bodyAlarmBodyDistance, g_config.bodyAlarmDelay,
+			g_config.bodyAlarmCreatures, g_config.bodyAlarmInvisibilityHides);
 	}
 
 	const Config& Get()

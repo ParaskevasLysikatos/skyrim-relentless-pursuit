@@ -23,6 +23,13 @@ namespace Settings
 		float pursuitTime{ 30.0f };       // seconds each one is kept in the fight after coming through
 		int   maxReturns{ 2 };            // times one that walks back through the door is brought out again
 
+		bool  bodyAlarm{ true };                  // an enemy that finds a body your side killed attacks you
+		float bodyAlarmRange{ 2800.0f };          // ... if you're within this many units of it (2800 = ~40 m)
+		float bodyAlarmBodyDistance{ 1024.0f };   // ... and it is within this many units of the body (~15 m)
+		float bodyAlarmDelay{ 2.0f };             // seconds between finding the body and attacking
+		bool  bodyAlarmCreatures{ true };         // creatures (wolves, draugr, Falmer...) raise it too
+		bool  bodyAlarmInvisibilityHides{ true }; // no alarm while you're invisible
+
 		std::vector<ExtraRace> extraExcludedRaces;  // on top of dragons, which are always excluded
 	};
 

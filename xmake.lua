@@ -1,7 +1,7 @@
 -- Relentless Pursuit: enemies follow you through load doors and into water, except dragons.
 set_xmakever("3.0.0")
 set_project("RelentlessPursuit")
-set_version("1.3.0")
+set_version("1.4.0")
 set_license("MIT")
 
 set_arch("x64")
@@ -20,7 +20,7 @@ set_config("skyrim_vr", true)
 includes("lib/commonlibsse-ng")
 
 target("RelentlessPursuit", function()
-    set_version("1.3.0")
+    set_version("1.4.0")
     add_deps("commonlibsse-ng")
     add_rules("commonlibsse-ng.plugin", {
         name = "RelentlessPursuit",

@@ -1,3 +1,4 @@
+#include "BodyAlarm.h"
 #include "DoorWatch.h"
 #include "Pursuit.h"
 #include "Settings.h"
@@ -18,9 +19,13 @@ namespace
 			Pursuit::ResolveForms();
 			Pursuit::Apply("data loaded");
 			DoorWatch::Install();
+			BodyAlarm::Install();
 			if (ZonelessCellsOn()) {
 				ZonelessCells::Install();
 			}
+			break;
+		case SKSE::MessagingInterface::kPreLoadGame:
+			BodyAlarm::Reset();  // handles from the old game are not valid after a load
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
 			Pursuit::Apply("save loaded");  // in case a save restored any zone flags
@@ -29,6 +34,7 @@ namespace
 			}
 			break;
 		case SKSE::MessagingInterface::kNewGame:
+			BodyAlarm::Reset();
 			Pursuit::Apply("new game");
 			if (ZonelessCellsOn()) {
 				ZonelessCells::ApplyToPlayerCell();
