@@ -10,6 +10,7 @@ namespace DoorWatch
 		using Clock = std::chrono::steady_clock;
 		constexpr auto        kWatchTime = std::chrono::seconds(90);
 		constexpr auto        kBatchTimeout = std::chrono::seconds(120);  // door used, loading screen never came
+		constexpr auto        kTick = std::chrono::milliseconds(500);      // how often the ones that came through are checked
 		constexpr std::size_t kMaxListed = 12;
 		constexpr float       kRunSpeed = 350.0f;  // units per second, for the arrival delay
 		constexpr float       kMinDelay = 2.0f;
@@ -30,6 +31,9 @@ namespace DoorWatch
 		{
 			RE::ActorHandle           actor;
 			std::chrono::milliseconds delay;
+			RE::TESObjectCELL*        fromCell;   // where it was when you used the door; only compared
+			RE::TESWorldSpace*        fromWorld;  // only compared
+			bool                      alerted;    // on alert, but not fighting you yet
 		};
 
 		// Enemies that will come through after the player once the loading screen closes.
@@ -40,6 +44,32 @@ namespace DoorWatch
 			RE::NiPoint3          destRot;
 			Clock::time_point     used;
 			std::vector<Follower> followers;
+		};
+
+		// One enemy that came through, kept in the fight for fPursuitTime seconds. Main thread only.
+		struct Arrival
+		{
+			RE::ActorHandle    actor;
+			std::string        name;
+			RE::FormID         formID{ 0 };
+			RE::TESObjectCELL* fromCell{ nullptr };   // only compared
+			RE::TESWorldSpace* fromWorld{ nullptr };  // only compared
+			Clock::time_point  arrived;
+			int                returns{ 0 };          // times it was brought out again after walking back
+			bool               restarted{ false };    // "attacks you again" already logged
+			std::string        outcome;               // empty while still watched
+		};
+
+		// Everything that came through one door. The worker thread only reads the atomics.
+		struct Chase
+		{
+			RE::ObjectRefHandle      destDoor;
+			RE::NiPoint3             destPos;
+			RE::NiPoint3             destRot;
+			Clock::time_point        used;
+			std::vector<Arrival>     arrivals;  // main thread only
+			std::atomic<std::size_t> pending{ 0 };
+			std::atomic_bool         over{ false };
 		};
 
 		std::mutex             g_lock;
@@ -53,6 +83,33 @@ namespace DoorWatch
 			}
 			const auto target = a_actor->GetActorRuntimeData().currentCombatTarget.get();
 			return target.get() == a_player || a_actor->IsHostileToActor(a_player);
+		}
+
+		// Hostile to the player and on alert (heard the fight, weapon out), but not in combat yet.
+		// Enemies searching for you after losing sight of you are still in combat, so they count as fighting.
+		bool IsAlertedEnemy(RE::Actor* a_actor, RE::PlayerCharacter* a_player)
+		{
+			if (!a_actor || a_actor == a_player || a_actor->IsDead() || a_actor->IsDisabled() || a_actor->IsInCombat() ||
+				a_actor->IsPlayerTeammate() || !a_actor->IsHostileToActor(a_player)) {
+				return false;
+			}
+			const auto* process = a_actor->GetActorRuntimeData().currentProcess;
+			if (process && process->lowProcessFlags.all(RE::AIProcess::LowProcessFlags::kAlert)) {
+				return true;
+			}
+			const auto* state = a_actor->AsActorState();
+			return state && state->IsWeaponDrawn();
+		}
+
+		// Same interior cell, or (outdoors) same worldspace.
+		bool SameArea(RE::Actor* a_actor, RE::PlayerCharacter* a_player)
+		{
+			auto* cell = a_player->GetParentCell();
+			if (cell && cell->IsInteriorCell()) {
+				return a_actor->GetParentCell() == cell;
+			}
+			auto* world = a_player->GetWorldspace();
+			return world && a_actor->GetWorldspace() == world;
 		}
 
 		// Empty string = may follow; otherwise the reason it won't.
@@ -103,64 +160,177 @@ namespace DoorWatch
 			return world && a_actor->GetWorldspace() == world && a_actor->GetPosition().GetDistance(a_player->GetPosition()) < 4096.0f;
 		}
 
-		// Main thread only.
-		void BringThrough(RE::ActorHandle a_actor, RE::ObjectRefHandle a_destDoor, RE::NiPoint3 a_pos, RE::NiPoint3 a_rot, Clock::time_point a_used)
+		// Back on the side of the door it came from: it walked back through the door.
+		bool WentBack(RE::Actor* a_actor, RE::PlayerCharacter* a_player, const Arrival& a_arrival)
 		{
-			auto  actor = a_actor.get();
-			auto  door = a_destDoor.get();
+			if (a_arrival.fromCell && a_actor->GetParentCell() == a_arrival.fromCell) {
+				return true;
+			}
+			auto* world = a_actor->GetWorldspace();
+			return a_arrival.fromWorld && world == a_arrival.fromWorld && a_player->GetWorldspace() != world;
+		}
+
+		// Main thread only. Enemies stop fighting once you leave their cell, so the ones that come through
+		// arrive calm and their normal AI walks them straight back through the door. Start the fight again
+		// as soon as the actor is fully loaded on this side. Returns true if combat was started.
+		bool KeepFighting(RE::Actor* a_actor, RE::PlayerCharacter* a_player)
+		{
+			if (a_actor->IsInCombat() || !a_actor->Is3DLoaded()) {
+				return false;
+			}
+			const auto* process = a_actor->GetActorRuntimeData().currentProcess;
+			if (!process || !process->InHighProcess()) {
+				return false;
+			}
+			a_actor->StartCombat(a_player);
+			return true;
+		}
+
+		// Main thread only.
+		void BringThrough(Chase& a_chase, const Follower& a_follower)
+		{
+			auto  actor = a_follower.actor.get();
+			auto  door = a_chase.destDoor.get();
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (!actor || !door || !player || actor->IsDead() || actor->IsDisabled()) {
 				return;
 			}
-			if (!PlayerIsOnThatSide(player, door.get(), a_pos)) {
+			if (!PlayerIsOnThatSide(player, door.get(), a_chase.destPos)) {
 				logger::info("{} [{:08X}] stays behind: you already left that area", actor->GetName(), actor->GetFormID());
 				return;
 			}
-			if (NearPlayer(actor.get(), player)) {
-				return;  // came through on its own
-			}
 
-			{
-				std::scoped_lock lock(g_lock);
-				std::erase_if(g_watched, [&](const Watched& w) { return w.actor == a_actor; });  // no "followed" double log
-			}
+			Arrival arrival;
+			arrival.actor = a_follower.actor;
+			arrival.name = actor->GetName();
+			arrival.formID = actor->GetFormID();
+			arrival.fromCell = a_follower.fromCell;
+			arrival.fromWorld = a_follower.fromWorld;
+			arrival.arrived = Clock::now();
 
-			MoveRefTo(actor.get(), door->GetHandle(), door->GetParentCell(), door->GetWorldspace(), a_pos, a_rot);
-			const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - a_used).count();
-			logger::info("{} [{:08X}] came through the door after you ({} s after you used it)", actor->GetName(), actor->GetFormID(), seconds);
+			if (!NearPlayer(actor.get(), player)) {
+				{
+					std::scoped_lock lock(g_lock);
+					std::erase_if(g_watched, [&](const Watched& w) { return w.actor == a_follower.actor; });  // no "followed" double log
+				}
+				MoveRefTo(actor.get(), door->GetHandle(), door->GetParentCell(), door->GetWorldspace(), a_chase.destPos, a_chase.destRot);
+				const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - a_chase.used).count();
+				logger::info("{} [{:08X}] came through the door after you ({} s after you used it{})", arrival.name, arrival.formID, seconds,
+					a_follower.alerted ? ", was alerted" : "");
+			}
+			// Otherwise it came through on its own; watch it all the same so it keeps fighting.
+
+			KeepFighting(actor.get(), player);  // usually not loaded yet; the checks below retry every 0.5 s
+			a_chase.arrivals.push_back(std::move(arrival));
 		}
 
-		// Main thread only. Followers that arrived and calmed down on the way pick the fight up again.
-		void ResumeCombat(const std::vector<RE::ActorHandle>& a_actors)
+		// Main thread only. For fPursuitTime seconds after coming through, every arrival is kept in the fight
+		// and brought out again (iMaxReturns times) if it walks back through the door.
+		void Tick(Chase& a_chase)
 		{
+			const auto& config = Settings::Get();
 			auto* player = RE::PlayerCharacter::GetSingleton();
-			if (!player) {
-				return;
-			}
-			for (const auto& handle : a_actors) {
-				auto actor = handle.get();
-				if (!actor || actor->IsDead() || actor->IsInCombat() || !actor->Is3DLoaded() ||
-					!NearPlayer(actor.get(), player) || !actor->GetActorRuntimeData().currentProcess) {
+			auto  door = a_chase.destDoor.get();
+			const auto now = Clock::now();
+			const auto watchFor = std::chrono::milliseconds(static_cast<long long>(config.pursuitTime * 1000.0f));
+			const bool playerThere = player && door && PlayerIsOnThatSide(player, door.get(), a_chase.destPos);
+
+			bool allDone = true;
+			for (auto& a : a_chase.arrivals) {
+				if (!a.outcome.empty()) {
 					continue;
 				}
-				actor->StartCombat(player);
+				const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - a.arrived).count();
+				auto       actor = a.actor.get();
+				if (!actor) {
+					a.outcome = "gone";
+				} else if (actor->IsDead()) {
+					a.outcome = std::format("killed {} s after coming through", seconds);
+				} else if (actor->IsDisabled()) {
+					a.outcome = "disabled";
+				} else if (!playerThere) {
+					a.outcome = "you left the area";
+				} else if (now - a.arrived >= watchFor) {
+					a.outcome = !NearPlayer(actor.get(), player) ? "away from you" : actor->IsInCombat() ? "still fighting you" : "near you, not fighting";
+				} else if (!NearPlayer(actor.get(), player)) {
+					if (WentBack(actor.get(), player, a)) {
+						if (a.returns < config.maxReturns) {
+							++a.returns;
+							MoveRefTo(actor.get(), door->GetHandle(), door->GetParentCell(), door->GetWorldspace(), a_chase.destPos, a_chase.destRot);
+							logger::info("{} [{:08X}] went back through the door: brought out again ({} of {}, {} s after coming through)",
+								a.name, a.formID, a.returns, config.maxReturns, seconds);
+						} else {
+							a.outcome = std::format("went back through the door (brought out again {} times)", a.returns);
+							logger::info("{} [{:08X}] went back through the door again: left there", a.name, a.formID);
+						}
+					}
+					// Otherwise it's just away from you (chasing you, or you ran); leave it to its own AI.
+				} else if (KeepFighting(actor.get(), player) && !a.restarted) {
+					a.restarted = true;
+					logger::info("{} [{:08X}] wasn't fighting after coming through: attacks you again ({} s after coming through)", a.name, a.formID, seconds);
+				}
+
+				if (a.outcome.empty()) {
+					allDone = false;
+				}
+			}
+
+			if (allDone && a_chase.pending == 0) {
+				a_chase.over = true;
+			}
+		}
+
+		// Main thread only.
+		void Finish(Chase& a_chase)
+		{
+			std::string summary;
+			for (auto& a : a_chase.arrivals) {
+				if (a.outcome.empty()) {
+					a.outcome = "watch ended";
+				}
+				summary += std::format("{}{} ({})", summary.empty() ? "" : ", ", a.name, a.outcome);
+			}
+			if (!summary.empty()) {
+				logger::info("Pursuit over: {}", summary);
 			}
 		}
 
 		void RunBatch(Batch a_batch)
 		{
-			std::thread([batch = std::move(a_batch)]() {
+			auto chase = std::make_shared<Chase>();
+			chase->destDoor = a_batch.destDoor;
+			chase->destPos = a_batch.destPos;
+			chase->destRot = a_batch.destRot;
+			chase->used = a_batch.used;
+			chase->pending = a_batch.followers.size();
+
+			const auto watchFor = std::chrono::milliseconds(static_cast<long long>(Settings::Get().pursuitTime * 1000.0f));
+
+			std::thread([chase, followers = std::move(a_batch.followers), watchFor]() {
+				auto*      tasks = SKSE::GetTaskInterface();
 				const auto start = Clock::now();
-				std::vector<RE::ActorHandle> handles;
-				for (const auto& follower : batch.followers) {
-					std::this_thread::sleep_until(start + follower.delay);
-					handles.push_back(follower.actor);
-					SKSE::GetTaskInterface()->AddTask([actor = follower.actor, door = batch.destDoor, pos = batch.destPos, rot = batch.destRot, used = batch.used]() {
-						BringThrough(actor, door, pos, rot, used);
-					});
+				const auto lastDelay = followers.empty() ? std::chrono::milliseconds(0) : followers.back().delay;
+				const auto end = start + lastDelay + watchFor + std::chrono::seconds(1);
+
+				std::size_t next = 0;
+				while (!chase->over && Clock::now() < end) {
+					const auto now = Clock::now();
+					for (; next < followers.size() && now >= start + followers[next].delay; ++next) {
+						tasks->AddTask([chase, follower = followers[next]]() {
+							BringThrough(*chase, follower);
+							--chase->pending;
+						});
+					}
+					if (next > 0) {
+						tasks->AddTask([chase]() { Tick(*chase); });
+					}
+					auto wake = now + kTick;
+					if (next < followers.size()) {
+						wake = (std::min)(wake, start + followers[next].delay);
+					}
+					std::this_thread::sleep_until(wake);
 				}
-				std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-				SKSE::GetTaskInterface()->AddTask([handles]() { ResumeCombat(handles); });
+				tasks->AddTask([chase]() { Finish(*chase); });
 			}).detach();
 		}
 
@@ -186,19 +356,25 @@ namespace DoorWatch
 
 				const auto& config = Settings::Get();
 				const bool  guardOn = config.dragonGuard;
+				const bool  alertedOn = config.teleportFollow && config.alertedFollow;
 				const auto  doorHandle = door->GetHandle();
 				const auto  now = Clock::now();
 				const auto  playerPos = player->GetPosition();
 
 				std::string listed;
+				std::string alertedListed;
 				std::size_t count = 0;
+				std::size_t alertedCount = 0;
 				std::vector<RE::ActorHandle> toStop;
 
 				struct Candidate
 				{
-					RE::ActorHandle actor;
-					float           distance;
-					std::string     name;
+					RE::ActorHandle    actor;
+					float              distance;
+					std::string        name;
+					RE::TESObjectCELL* cell;
+					RE::TESWorldSpace* world;
+					bool               alerted;
 				};
 				std::vector<Candidate> candidates;
 				std::size_t skippedFar = 0, skippedQuest = 0, skippedOther = 0;
@@ -209,6 +385,18 @@ namespace DoorWatch
 
 					RE::ProcessLists::GetSingleton()->ForAllActors([&](RE::Actor* a_actor) {
 						if (!IsFightingPlayer(a_actor, player)) {
+							// Not fighting you: maybe on alert (heard the fight) and hostile.
+							if (alertedOn && IsAlertedEnemy(a_actor, player) && SameArea(a_actor, player) && !Pursuit::IsExcludedActor(a_actor)) {
+								const float distance = a_actor->GetPosition().GetDistance(playerPos);
+								const auto  blocker = FollowBlocker(a_actor, distance, config);
+								if (blocker.empty()) {
+									candidates.push_back({ a_actor->GetHandle(), distance, a_actor->GetName(), a_actor->GetParentCell(), a_actor->GetWorldspace(), true });
+								}
+								if (++alertedCount <= kMaxListed) {
+									alertedListed += std::format("{}{} ({:.0f} units{})", alertedCount > 1 ? ", " : "", a_actor->GetName(), distance,
+										blocker.empty() ? "" : std::format(", {}", blocker));
+								}
+							}
 							return RE::BSContainer::ForEachResult::kContinue;
 						}
 						const auto  handle = a_actor->GetHandle();
@@ -225,7 +413,7 @@ namespace DoorWatch
 						} else if (config.teleportFollow) {
 							const auto blocker = FollowBlocker(a_actor, distance, config);
 							if (blocker.empty()) {
-								candidates.push_back({ handle, distance, a_actor->GetName() });
+								candidates.push_back({ handle, distance, a_actor->GetName(), a_actor->GetParentCell(), a_actor->GetWorldspace(), false });
 							} else if (blocker == "too far"sv) {
 								++skippedFar;
 							} else if (blocker == "quest"sv) {
@@ -247,11 +435,17 @@ namespace DoorWatch
 				} else if (player->IsInCombat()) {
 					logger::info("Door used while in combat, but no enemy has you as target");
 				}
+				if (alertedCount > 0) {
+					logger::info("Door used, {} enemies alerted (not fighting you yet): {}{}", alertedCount, alertedListed, alertedCount > kMaxListed ? ", ..." : "");
+				}
 
 				// Queue the followers; they start coming once the loading screen closes.
+				// The ones fighting you come first, then the alerted ones; closest first in each group.
 				const auto* data = teleport->teleportData;
 				if (config.teleportFollow && data && data->linkedDoor && !candidates.empty()) {
-					std::ranges::sort(candidates, {}, &Candidate::distance);
+					std::ranges::sort(candidates, [](const Candidate& a_lhs, const Candidate& a_rhs) {
+						return std::tie(a_lhs.alerted, a_lhs.distance) < std::tie(a_rhs.alerted, a_rhs.distance);
+					});
 					const auto maxFollowers = static_cast<std::size_t>((std::max)(config.maxFollowers, 0));
 					const auto overLimit = candidates.size() > maxFollowers ? candidates.size() - maxFollowers : 0;
 					candidates.resize((std::min)(candidates.size(), maxFollowers));
@@ -259,19 +453,22 @@ namespace DoorWatch
 					Batch       batch{ data->linkedDoor, data->position, data->rotation, now, {} };
 					std::string plan;
 					for (std::size_t i = 0; i < candidates.size(); ++i) {
-						const float seconds = std::clamp(candidates[i].distance / kRunSpeed, kMinDelay, kMaxDelay) + kStagger * static_cast<float>(i);
-						batch.followers.push_back({ candidates[i].actor, std::chrono::milliseconds(static_cast<long long>(seconds * 1000.0f)) });
-						plan += std::format("{}{} (~{:.0f} s)", i > 0 ? ", " : "", candidates[i].name, seconds);
+						const auto& c = candidates[i];
+						const float seconds = std::clamp(c.distance / kRunSpeed, kMinDelay, kMaxDelay) + kStagger * static_cast<float>(i);
+						batch.followers.push_back({ c.actor, std::chrono::milliseconds(static_cast<long long>(seconds * 1000.0f)), c.cell, c.world, c.alerted });
+						plan += std::format("{}{} (~{:.0f} s{})", i > 0 ? ", " : "", c.name, seconds, c.alerted ? ", alerted" : "");
 					}
 					std::ranges::sort(batch.followers, {}, &Follower::delay);
 
-					logger::info("Coming through after you: {}{}", plan,
-						overLimit + skippedFar + skippedQuest + skippedOther > 0 ?
-							std::format(" (not coming: {} over the limit, {} too far, {} quest, {} mounted/immobile/bleeding out)", overLimit, skippedFar, skippedQuest, skippedOther) :
-							std::string());
+					if (!batch.followers.empty()) {
+						logger::info("Coming through after you: {}{}", plan,
+							overLimit + skippedFar + skippedQuest + skippedOther > 0 ?
+								std::format(" (not coming: {} over the limit, {} too far, {} quest, {} mounted/immobile/bleeding out)", overLimit, skippedFar, skippedQuest, skippedOther) :
+								std::string());
 
-					std::scoped_lock lock(g_lock);
-					g_batch = std::move(batch);
+						std::scoped_lock lock(g_lock);
+						g_batch = std::move(batch);
+					}
 				}
 
 				if (!toStop.empty()) {
@@ -392,8 +589,9 @@ namespace DoorWatch
 		ui->AddEventSink<RE::MenuOpenCloseEvent>(&menuSink);
 
 		const auto& config = Settings::Get();
-		logger::info("Door watch installed (follow-through {}: radius {:.0f}, max {}, quest enemies {}; dragon guard {})",
+		logger::info("Door watch installed (follow-through {}: radius {:.0f}, max {}, alerted enemies {}, quest enemies {}, kept fighting for {:.0f} s, brought out again up to {} times; dragon guard {})",
 			config.teleportFollow ? "on" : "off", config.followRadius, config.maxFollowers,
-			config.skipQuestActors ? "skipped" : "follow too", config.dragonGuard ? "on" : "off");
+			config.alertedFollow ? "too" : "no", config.skipQuestActors ? "skipped" : "follow too",
+			config.pursuitTime, config.maxReturns, config.dragonGuard ? "on" : "off");
 	}
 }

@@ -107,6 +107,8 @@ namespace Settings
 				g_config.noZoneCells = ParseBool(value, g_config.noZoneCells);
 			} else if (key == "bteleportfollow") {
 				g_config.teleportFollow = ParseBool(value, g_config.teleportFollow);
+			} else if (key == "balertedfollow") {
+				g_config.alertedFollow = ParseBool(value, g_config.alertedFollow);
 			} else if (key == "bskipquestactors") {
 				g_config.skipQuestActors = ParseBool(value, g_config.skipQuestActors);
 			} else if (key == "ffollowradius") {
@@ -121,14 +123,26 @@ namespace Settings
 				} catch (...) {
 					logger::warn("iMaxFollowers '{}' is not a number, keeping {}", value, g_config.maxFollowers);
 				}
+			} else if (key == "fpursuittime") {
+				try {
+					g_config.pursuitTime = std::clamp(std::stof(value), 0.0f, 600.0f);
+				} catch (...) {
+					logger::warn("fPursuitTime '{}' is not a number, keeping {:.0f}", value, g_config.pursuitTime);
+				}
+			} else if (key == "imaxreturns") {
+				try {
+					g_config.maxReturns = std::clamp(std::stoi(value), 0, 10);
+				} catch (...) {
+					logger::warn("iMaxReturns '{}' is not a number, keeping {}", value, g_config.maxReturns);
+				}
 			} else if (key == "sextraexcludedraces") {
 				ParseRaceList(value, g_config.extraExcludedRaces);
 			}
 		}
 
-		logger::info("Settings: doors={} noZoneCells={} teleportFollow={} followRadius={:.0f} maxFollowers={} skipQuestActors={} water={} dragonGuard={} extraExcludedRaces={}",
-			g_config.doorPursuit, g_config.noZoneCells, g_config.teleportFollow, g_config.followRadius, g_config.maxFollowers,
-			g_config.skipQuestActors, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
+		logger::info("Settings: doors={} noZoneCells={} teleportFollow={} alertedFollow={} followRadius={:.0f} maxFollowers={} skipQuestActors={} pursuitTime={:.0f} maxReturns={} water={} dragonGuard={} extraExcludedRaces={}",
+			g_config.doorPursuit, g_config.noZoneCells, g_config.teleportFollow, g_config.alertedFollow, g_config.followRadius, g_config.maxFollowers,
+			g_config.skipQuestActors, g_config.pursuitTime, g_config.maxReturns, g_config.waterPursuit, g_config.dragonGuard, g_config.extraExcludedRaces.size());
 	}
 
 	const Config& Get()
